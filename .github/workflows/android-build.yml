@@ -1,0 +1,88 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build APK (aapt + javac + d8 + apksigner)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Add Android build-tools (aapt, zipalign, apksigner) to PATH
+        run: |
+          set -euo pipefail
+          bt_root="$ANDROID_HOME/build-tools"
+          [ -d "$bt_root" ] || { echo "ANDROID_HOME build-tools not found at $bt_root" >&2; exit 1; }
+          ver="$(ls -1 "$bt_root" | sort -V | tail -1)"
+          echo "Using Android build-tools $ver"
+          echo "$bt_root/$ver" >> "$GITHUB_PATH"
+
+      - name: Verify host toolchain
+        run: |
+          set -euo pipefail
+          for t in aapt javac java zipalign apksigner zip unzip python3 sha256sum gzip file mktemp keytool; do
+            command -v "$t" >/dev/null 2>&1 || { echo "missing host tool: $t" >&2; exit 1; }
+          done
+          echo "All host tools present."
+
+      - name: Build APK (release edition, debug-keystore signed)
+        env:
+          LANG: C.UTF-8
+          LC_ALL: C.UTF-8
+        run: |
+          set -euo pipefail
+          # No ~/.keys/signing.env on CI: 09-sign.sh auto-generates a local
+          # debug keystore (androiddebugkey), so this is a signed dev/release build.
+          bash build.sh
+
+      - name: Verify build output
+        run: |
+          set -euo pipefail
+          ls -lh dist/
+          test -f dist/antigravity.apk || { echo "dist/antigravity.apk missing" >&2; exit 1; }
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: antigravity-apk
+          path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Attach APK to GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download built APK
+        uses: actions/download-artifact@v4
+        with:
+          name: antigravity-apk
+          path: dist
+
+      - name: Attach APK to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.apk
+          fail_on_unmatched_files: true
