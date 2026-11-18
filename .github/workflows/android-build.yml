@@ -44,14 +44,32 @@ jobs:
           done
           echo "All host tools present."
 
+      - name: Generate debug keystore
+        run: |
+          set -euo pipefail
+          # prereqs.sh fails closed if KEYSTORE is missing before the build,
+          # while 09-sign.sh only auto-generates it later. Pre-create the
+          # standard debug keystore matching config/tools.env defaults.
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            mkdir -p "$HOME/.android"
+            keytool -genkeypair \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storetype PKCS12 \
+              -alias androiddebugkey \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass android \
+              -keypass android \
+              -dname "CN=Local Dev Build, O=Antigravity" >/dev/null
+          fi
+
       - name: Build APK (release edition, debug-keystore signed)
         env:
           LANG: C.UTF-8
           LC_ALL: C.UTF-8
         run: |
           set -euo pipefail
-          # No ~/.keys/signing.env on CI: 09-sign.sh auto-generates a local
-          # debug keystore (androiddebugkey), so this is a signed dev/release build.
           bash build.sh
 
       - name: Verify build output
